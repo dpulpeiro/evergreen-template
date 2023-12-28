@@ -1,0 +1,28 @@
+name: publish
+on: [push]
+jobs:
+  publish-docker-image:
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/${{ github.repository_name }}
+      DOCKERFILE: path/to/dockerfile
+    steps:
+      - uses: actions/checkout@v3
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build your docker image. Steps may be different depending on the project
+      - name: Build the ${{ github.repository_name }} Docker image
+        run: |
+          export TAG=$(git log -1 --format=%h --quiet | awk -F@ '{print $1}')
+          export DOCKER_IMAGE="$IMAGE:$TAG"
+          export DOCKER_BUILDKIT=1 
+          docker build -f ${DOCKERFILE} -t ${DOCKER_IMAGE} . && \
+          echo "build finished" && \
+          docker push $DOCKER_IMAGE && \
+          git tag "release/$TAG" && \
+          git push origin --tags

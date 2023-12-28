@@ -1,0 +1,47 @@
+
+name: Setup Machine
+
+on:
+  workflow_dispatch:
+    inputs:
+      ssh_user:
+        description: 'SSH user'
+        required: true
+        default: 'root'
+      ssh_pass:
+        description: 'SSH password'
+        required: true
+        default: ''
+      ssh_public_key:
+        description: 'SSH Public Key'
+        required: true
+        default: ''
+      remote_host:
+        description: 'Remote host. Example: 10.10.10.10'
+        required: true
+        default: ''
+      remote_port:
+        description: 'Remote port'
+        required: true
+        default: '22'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ github.event.inputs.remote_host }} >> ~/.ssh/known_hosts
+          echo "${{ github.event.inputs.ssh_public_key }}" > ~/.ssh/id_rsa.pub
+
+      - name: Run Ansible Playbook
+        run: |
+          echo $PWD
+          ls
+          sshpass -p ${{ github.event.inputs.ssh_pass }} ansible-playbook -i "${{ github.event.inputs.remote_host }}:${{ github.event.inputs.remote_port }}," resources/playbook-setup-machine.yml --user ${{ github.event.inputs.ssh_user }} --ask-pass
+          
+        

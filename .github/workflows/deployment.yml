@@ -1,0 +1,51 @@
+name: deployment
+on: [push]
+# Configure secrets
+# SSH_PRIVATE_KEY
+# SWARM_MASTER
+jobs:
+  deploy-changes:
+    runs-on: ubuntu-latest
+    env:
+      SWARM_MASTER: ${{secrets.SWARM_MASTER}}
+      SSH_PRIVATE_KEY: ${{secrets.SSH_PRIVATE_KEY}}
+      DEPLOYMENT_FOLDER: ${{ github.event.repository.name }}
+      DEPLOYMENT_BACKUP_FOLDER: ${{ github.event.repository.name }}_backup
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Create SSH key
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh/ && \
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa && \
+          sudo chmod 600 ~/.ssh/id_rsa && \
+          echo -e "Host *\n\tStrictHostKeyChecking no\n\tUserKnownHostsFile=/dev/null" > ~/.ssh/config
+
+      - name: Copy to remote
+        run: |
+          chmod +x ./scripts/*
+          ssh $SWARM_MASTER "rm -rf $DEPLOYMENT_BACKUP_FOLDER ||true && cp -r $DEPLOYMENT_FOLDER $DEPLOYMENT_BACKUP_FOLDER || true" 
+          rsync -p -v --delete --exclude='.git/' --filter='P .env.production' -r ./ $SWARM_MASTER:~/$DEPLOYMENT_FOLDER
+      - name: Setup remote
+        run: |
+          ssh $SWARM_MASTER "cd $DEPLOYMENT_FOLDER && ./scripts/setup-networks.sh services"
+
+      - name: Get changed files
+        id: changed-files
+        uses: tj-actions/changed-files@v35
+        with:
+          files: |
+            services/**/*
+
+      - name: Deploy changes
+        run: |
+          for file in $(./scripts/deploy.sh related_composes ${{ steps.changed-files.outputs.all_changed_files }}); do
+            ssh $SWARM_MASTER "cd $DEPLOYMENT_FOLDER && ./scripts/deploy.sh compose $file"
+          done
+
+      - name: Clean services
+        run: |
+          ssh $SWARM_MASTER "cd $DEPLOYMENT_FOLDER && ./scripts/deploy.sh clean"

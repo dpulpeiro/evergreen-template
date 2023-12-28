@@ -1,0 +1,130 @@
+- name: Harden Debian Server
+  hosts: all
+  become: yes
+
+  vars:
+    new_user: smooth
+    public_key_file: ~/.ssh/id_rsa.pub  # Replace with the path to your public key file
+
+  tasks:
+    - name: Read SSH public key from a local file
+      set_fact:
+        ssh_public_key: "{{ lookup('file', public_key_file) }}"
+
+    - name: Create a non-root user
+      user:
+        name: "{{ new_user }}"
+        state: present
+        create_home: yes
+        shell: /bin/bash
+
+    - name: Install Rsync
+      apt:
+        name: rsync
+        state: present
+
+    - name: Install Sudo
+      apt:
+        name: sudo
+        state: present
+
+    - name: Install jq
+      apt:
+        name: jq
+        state: present
+
+    - name: Install yq
+      shell: >
+        wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq && \
+        chmod +x /usr/bin/yq
+      args:
+        creates: /usr/bin/yq
+
+    - name: Add the user to the sudoers file without requiring a password
+      lineinfile:
+        path: /etc/sudoers
+        line: "{{ new_user }} ALL=(ALL) NOPASSWD: ALL"
+        validate: 'visudo -cf %s'
+
+    - name: Ensure the .ssh directory exists
+      file:
+        path: "/home/{{ new_user }}/.ssh"
+        state: directory
+        mode: '0700'
+        owner: "{{ new_user }}"
+        group: "{{ new_user }}"
+
+    - name: Add the given public key to the authorized keys
+      authorized_key:
+        user: "{{ new_user }}"
+        state: present
+        key: "{{ ssh_public_key }}"
+
+    - name: Install Docker
+      become: yes
+      shell: curl -fsSL https://get.docker.com | sh
+
+    - name: Add user to Docker group
+      user:
+        name: "{{ new_user }}"
+        groups: docker
+        append: yes
+      become: yes
+
+    - name: Install UFW
+      apt:
+        name: ufw
+        state: present
+
+    - name: Initialize Docker Swarm
+      shell: docker swarm init --advertise-addr "{{ ansible_default_ipv4.address }}"
+      become: yes
+
+    - name: Allow selected ports and deny all others
+      block:
+        - name: Reset UFW rules
+          ufw:
+            state: reset
+
+        - name: Deny all incoming by default
+          ufw:
+            direction: incoming
+            policy: deny
+
+        - name: Allow SSH (port 22)
+          ufw:
+            rule: allow
+            port: 22
+
+        - name: Allow HTTP (port 80)
+          ufw:
+            rule: allow
+            port: 80
+
+        - name: Allow HTTPS (port 443)
+          ufw:
+            rule: allow
+            port: 443
+
+        - name: Allow custom SSH port (2222)
+          ufw:
+            rule: allow
+            port: 2222
+
+    - name: Enable UFW
+      ufw:
+        state: enabled
+
+    - name: Disable SSH password authentication
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?\s*PasswordAuthentication.*'
+        line: 'PasswordAuthentication no'
+        state: present
+      notify: Restart ssh
+
+  handlers:
+    - name: Restart ssh
+      service:
+        name: ssh
+        state: restarted
